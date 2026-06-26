@@ -1,6 +1,6 @@
 [project]
 name = "orionbelt-ontology-builder"
-version = "1.6.1"
+version = "1.6.2"
 description = "A Streamlit application for building, editing, and managing OWL ontologies"
 readme = "README.md"
 license = {text = "BSL-1.1"}
@@ -28,6 +28,9 @@ dependencies = [
     "pyvis>=0.3.2",
     "streamlit-local-storage>=0.0.25",
 ]
+
+[project.scripts]
+orionbelt-ontology-builder = "orionbelt_ontology_builder.cli:run"
 
 [project.optional-dependencies]
 dev = [
