@@ -14,7 +14,7 @@ from pathlib import Path as _Path
 from . import local_store
 
 APP_NAME = "OrionBelt Ontology Builder"
-APP_VERSION = "1.10.0"
+APP_VERSION = "1.10.1"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -6278,11 +6278,32 @@ def main():
     # Use the white logo in dark mode so it stays legible (the colour logo is
     # dark on transparent). st.context.theme reflects the active theme on recent
     # Streamlit; older versions fall back to the colour logo.
-    _dark_mode = False
+    _theme_type = None
     try:
-        _dark_mode = st.context.theme.type == "dark"
+        _theme_type = st.context.theme.type
     except Exception:
         pass
+    # st.context.theme is stale on the first render of a session — it reports the
+    # default ("light") until the browser tells the server the active theme. So
+    # persist the choice only from the second render on; doing it on the first
+    # render would clobber the saved preference the launcher just applied with a
+    # stale "light" before the user touches anything (issue #70). Disk
+    # persistence is off on the cloud, where the browser keeps the choice itself.
+    if (
+        _theme_type in ("light", "dark")
+        and st.session_state.get("_theme_settled")
+        and local_store.local_persist_enabled()
+        and local_store.get_theme_base() != _theme_type
+    ):
+        local_store.set_theme_base(_theme_type)
+    st.session_state["_theme_settled"] = True
+    # Choose the logo from the persisted preference in local mode (what the
+    # launcher opened the app with via --theme.base), since st.context.theme lags
+    # on first render and would otherwise flash the light/blue logo in dark mode.
+    if local_store.local_persist_enabled():
+        _dark_mode = local_store.get_theme_base() == "dark"
+    else:
+        _dark_mode = _theme_type == "dark"
     _logo_file = "ORIONBELT Logo w.png" if _dark_mode else "ORIONBELT_Logo.png"
     _logo_path = _Path(__file__).parent / "assets" / _logo_file
     st.sidebar.image(str(_logo_path), width=200)
