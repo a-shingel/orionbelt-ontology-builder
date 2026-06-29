@@ -1,6 +1,8 @@
 """Tests for the local-filesystem persistence helpers."""
 
 import json
+import sys
+import types
 
 import pytest
 
@@ -103,24 +105,24 @@ def test_get_linked_path_expands_user(home, monkeypatch):
     assert local_store.get_linked_path() == home / "backup.ttl"
 
 
-def test_theme_base_set_get_clear(home):
+def test_theme_base_default_is_none(home):
+    # No pin stored means "follow the OS".
     assert local_store.get_theme_base() is None
 
+
+def test_theme_base_set_get_clear(home):
     local_store.set_theme_base("dark")
     assert local_store.get_theme_base() == "dark"
-
     local_store.set_theme_base("light")
     assert local_store.get_theme_base() == "light"
-
-    local_store.set_theme_base(None)
+    local_store.set_theme_base(None)  # clearing returns to follow-system
     assert local_store.get_theme_base() is None
 
 
-@pytest.mark.parametrize("value", ["", "Dark", "blue", "system", None])
-def test_theme_base_ignores_invalid_values(home, value):
-    local_store.save_config({"theme_base": "dark"})
+@pytest.mark.parametrize("value", ["", "blue", "System", None])
+def test_set_theme_base_invalid_clears_pin(home, value):
+    local_store.set_theme_base("dark")
     local_store.set_theme_base(value)
-    # Anything that isn't light/dark clears the preference rather than storing it.
     assert local_store.get_theme_base() is None
     assert "theme_base" not in local_store.load_config()
 
@@ -128,6 +130,33 @@ def test_theme_base_ignores_invalid_values(home, value):
 def test_set_theme_base_preserves_other_config(home):
     local_store.set_linked_path("/x.ttl")
     local_store.set_theme_base("dark")
-    config = local_store.load_config()
-    assert config["linked_path"] == "/x.ttl"
-    assert config["theme_base"] == "dark"
+    assert local_store.load_config()["linked_path"] == "/x.ttl"
+
+
+def test_detect_system_base_uses_darkdetect(home, monkeypatch):
+    fake = types.ModuleType("darkdetect")
+    fake.theme = lambda: "Dark"
+    monkeypatch.setitem(sys.modules, "darkdetect", fake)
+    assert local_store.detect_system_base() == "dark"
+
+
+def test_detect_system_base_without_darkdetect_returns_none(home, monkeypatch):
+    monkeypatch.setitem(sys.modules, "darkdetect", None)  # makes import fail
+    assert local_store.detect_system_base() is None
+
+
+def test_resolved_startup_base_prefers_pin(home, monkeypatch):
+    fake = types.ModuleType("darkdetect")
+    fake.theme = lambda: "Light"
+    monkeypatch.setitem(sys.modules, "darkdetect", fake)
+    local_store.set_theme_base("dark")
+    # A stored pin wins over the detected OS appearance.
+    assert local_store.resolved_startup_base() == "dark"
+
+
+def test_resolved_startup_base_falls_back_to_system(home, monkeypatch):
+    fake = types.ModuleType("darkdetect")
+    fake.theme = lambda: "Dark"
+    monkeypatch.setitem(sys.modules, "darkdetect", fake)
+    # No pin -> follow the OS.
+    assert local_store.resolved_startup_base() == "dark"

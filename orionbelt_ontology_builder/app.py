@@ -14,7 +14,7 @@ from pathlib import Path as _Path
 from . import local_store
 
 APP_NAME = "OrionBelt Ontology Builder"
-APP_VERSION = "1.10.1"
+APP_VERSION = "1.11.0"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -6284,24 +6284,37 @@ def main():
     except Exception:
         pass
     # st.context.theme is stale on the first render of a session — it reports the
-    # default ("light") until the browser tells the server the active theme. So
-    # persist the choice only from the second render on; doing it on the first
-    # render would clobber the saved preference the launcher just applied with a
-    # stale "light" before the user touches anything (issue #70). Disk
-    # persistence is off on the cloud, where the browser keeps the choice itself.
-    if (
-        _theme_type in ("light", "dark")
-        and st.session_state.get("_theme_settled")
-        and local_store.local_persist_enabled()
-        and local_store.get_theme_base() != _theme_type
-    ):
-        local_store.set_theme_base(_theme_type)
+    # default ("light") until the browser tells the server the active theme, so
+    # only trust it from the second render on (issues #70, #78).
+    _theme_settled = st.session_state.get("_theme_settled", False)
     st.session_state["_theme_settled"] = True
-    # Choose the logo from the persisted preference in local mode (what the
-    # launcher opened the app with via --theme.base), since st.context.theme lags
-    # on first render and would otherwise flash the light/blue logo in dark mode.
     if local_store.local_persist_enabled():
-        _dark_mode = local_store.get_theme_base() == "dark"
+        # Detect the OS appearance once per session (cached) — calling darkdetect
+        # every render shells out to the OS and made the UI lag.
+        if "_system_base" not in st.session_state:
+            st.session_state["_system_base"] = local_store.detect_system_base()
+        _system_base = st.session_state["_system_base"]
+        _pinned = local_store.get_theme_base()
+        # Persist a pin only when the user actually changes the theme: while
+        # following the OS (no pin), store only a deviation from the OS theme; a
+        # match is left unstored so it keeps following the system. Once pinned,
+        # keep it in sync with the toolbar Settings menu. To return to "follow
+        # system", clear the saved setting. Skip the stale first render.
+        if _theme_settled and _theme_type in ("light", "dark"):
+            if _pinned is None:
+                if _system_base in ("light", "dark") and _theme_type != _system_base:
+                    local_store.set_theme_base(_theme_type)
+                    _pinned = _theme_type
+            elif _theme_type != _pinned:
+                local_store.set_theme_base(_theme_type)
+                _pinned = _theme_type
+        # Logo: use the live theme once the client reports it; on the first
+        # render fall back to what the launcher opened the app with (pin, else
+        # detected OS), so the dark logo doesn't flash the light/blue variant.
+        if _theme_settled and _theme_type in ("light", "dark"):
+            _dark_mode = _theme_type == "dark"
+        else:
+            _dark_mode = (_pinned or _system_base) == "dark"
     else:
         _dark_mode = _theme_type == "dark"
     _logo_file = "ORIONBELT Logo w.png" if _dark_mode else "ORIONBELT_Logo.png"

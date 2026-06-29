@@ -18,7 +18,9 @@ Two disk-backed mechanisms live on top of these helpers (wired up in
   (:func:`get_linked_path` / :func:`set_linked_path`). Pointing it at a synced
   folder (Nextcloud, Dropbox, ...) gives fully automatic off-machine backups.
 
-No third-party dependencies: only the standard library is used.
+Standard library only, except :func:`resolved_startup_base`, which optionally
+imports ``darkdetect`` (shipped with the ``desktop`` extra) to read the OS
+appearance for the ``system`` theme mode, degrading gracefully when it is absent.
 """
 
 import json
@@ -122,24 +124,49 @@ def save_config(config: dict) -> None:
 
 
 def get_theme_base() -> str | None:
-    """Return the saved light/dark theme preference, or ``None`` if unset.
+    """Return the pinned light/dark theme, or ``None`` to follow the OS.
 
-    Persisted server-side (desktop / local mode only) so the launcher can
-    re-apply it on the next launch; the cloud keeps the choice in the browser's
-    localStorage instead (issue #70).
+    A pin is only stored once the user actually changes the theme away from the
+    OS appearance (issues #70, #78); otherwise the app follows the system. Saved
+    server-side (desktop / local mode only); the cloud keeps the choice in the
+    browser's localStorage instead.
     """
     base = load_config().get("theme_base")
     return base if base in ("light", "dark") else None
 
 
 def set_theme_base(base: str | None) -> None:
-    """Save (or clear, when ``base`` is not light/dark) the theme preference."""
+    """Pin a light/dark theme, or clear the pin (back to following the OS)."""
     config = load_config()
     if base in ("light", "dark"):
         config["theme_base"] = base
     else:
         config.pop("theme_base", None)
     save_config(config)
+
+
+def detect_system_base() -> str | None:
+    """Read the OS light/dark appearance, or ``None`` if it can't be determined.
+
+    Reads the OS directly via ``darkdetect`` (shipped with the desktop extra),
+    since the embedded webview can't be relied on to report the system colour
+    scheme. Returns ``None`` when ``darkdetect`` is absent or undecided, so the
+    caller can let the browser's own system preference apply.
+    """
+    try:
+        import darkdetect
+
+        detected = darkdetect.theme()  # "Dark" / "Light" / None
+    except Exception:
+        return None
+    if isinstance(detected, str) and detected.lower() in ("light", "dark"):
+        return detected.lower()
+    return None
+
+
+def resolved_startup_base() -> str | None:
+    """Theme to open with: the pin if set, else the detected OS appearance."""
+    return get_theme_base() or detect_system_base()
 
 
 def get_linked_path() -> Path | None:
