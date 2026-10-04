@@ -19,6 +19,8 @@ from ..ui import (
     PATH_HIGHLIGHT_COLOR,
     PKG_DIR,
     VIZ_NODE_PANEL,
+    VIZ_NODE_REDO_KEY,
+    VIZ_NODE_UNDO_KEY,
     VIZ_PARKED_SEEDS_KEY,
     _build_name_collision_set,
     _disambiguated_name,
@@ -86,7 +88,13 @@ from ..ui import (
     viz_leave_empty_focus,
     viz_mark_ontology_seen,
     viz_new_hidden_message,
+    viz_node_history_follow_renames,
     viz_node_id,
+    viz_node_redo,
+    viz_node_redo_available,
+    viz_node_undo,
+    viz_node_undo_available,
+    viz_node_undo_checkpoint,
     viz_ontology_was_replaced,
     viz_rename_map,
     viz_set_focus_seeds,
@@ -127,6 +135,31 @@ COPY_ICON_PATH = (
     "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 "
     "2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
 )
+
+
+def _node_undo_buttons() -> None:
+    """The Node options panel's Undo and Redo (issue #491), side by side.
+
+    Callbacks rather than ``if st.button(...)``: both rewrite state the widgets
+    above them are seeded from, which is only allowed before those render.
+    """
+    undo_col, redo_col = st.columns([1, 1])
+    undo_col.button(
+        "↶ Undo",
+        key="viz_node_undo",
+        on_click=viz_node_undo,
+        disabled=not viz_node_undo_available(),
+        use_container_width=True,
+        help="Take back the last change to the node filters or the focus.",
+    )
+    redo_col.button(
+        "↷ Redo",
+        key="viz_node_redo",
+        on_click=viz_node_redo,
+        disabled=not viz_node_redo_available(),
+        use_container_width=True,
+        help="Put back the change Undo just took back.",
+    )
 
 
 def status_bar_copy_html(text: str) -> str:
@@ -1087,11 +1120,18 @@ def render_visualization():
             # id, which is why the prune exists at all. Dropped, like the notes
             # (Codex review of PR #397).
             st.session_state.pop(VIZ_PARKED_SEEDS_KEY, None)
+            # And the undo steps (issue #491), which name the entities of the
+            # ontology that was swapped out for the same reason.
+            st.session_state.pop(VIZ_NODE_UNDO_KEY, None)
+            st.session_state.pop(VIZ_NODE_REDO_KEY, None)
         # The graph component carries a renamed node's cached position over to
         # the id it now has, so the render it lands on stays where it was
         # instead of re-framing the whole graph (issue #329). Flattened here
         # because the component applies one hop per id.
         _viz_renames = viz_rename_map(_renames)
+        viz_node_history_follow_renames(
+            _renames, {k: f["uris"] for k, f in filters.items()}, focus_targets
+        )
         if _renames and "_viz_cfg_focus_seeds" in st.session_state:
             (
                 st.session_state["_viz_cfg_focus_seeds"],
@@ -1349,9 +1389,10 @@ def render_visualization():
                 # Parsing answers in the picker's own labels: those are the
                 # entries' identity, since one IRI can be two focus targets.
                 _focus_entries, _focus_tokens = build_focus_seed_entries(focus_records)
-                with st.columns([1, 1])[1].popover(
-                    "Paste / copy", use_container_width=True
-                ):
+                _fundo_col, _fpaste_col = st.columns([1, 1])
+                with _fundo_col:
+                    _node_undo_buttons()
+                with _fpaste_col.popover("Paste / copy", use_container_width=True):
                     _fpaste_text = st.text_area(
                         "Paste a list of focus nodes",
                         key="viz_focus_paste",
@@ -1375,6 +1416,7 @@ def render_visualization():
                         # page and takes anything drawn on that pass with it.
                         st.session_state["_viz_focus_paste_unknown"] = _funknown
                         if _fpasted:
+                            viz_node_undo_checkpoint()
                             viz_set_focus_seeds(_fpasted)
                             st.rerun()
                         elif not _funknown:
@@ -1503,6 +1545,7 @@ def render_visualization():
                             use_container_width=True,
                             help=f"Show every {_noun} in the graph again.",
                         ):
+                            viz_node_undo_checkpoint()
                             st.session_state[f"_viz_cfg_selected_{_key}_uris"] = list(
                                 active["uris"]
                             )
@@ -1519,6 +1562,7 @@ def render_visualization():
                                 help=f"Add the {_plural} created since you "
                                 "narrowed this filter to the selection.",
                             ):
+                                viz_node_undo_checkpoint()
                                 _keep = set(_picked_uris) | set(_new_hidden)
                                 st.session_state[f"_viz_cfg_selected_{_key}_uris"] = [
                                     u for u in active["uris"] if u in _keep
@@ -1558,6 +1602,7 @@ def render_visualization():
                             # not inherit what the classes box ignored.
                             st.session_state[f"_viz_paste_unknown_{_key}"] = _unknown
                             if _pasted:
+                                viz_node_undo_checkpoint()
                                 st.session_state[f"_viz_cfg_selected_{_key}_uris"] = (
                                     _pasted
                                 )
@@ -1591,7 +1636,10 @@ def render_visualization():
                     # this is where the behaviour is visible; it governs every
                     # filterable kind, not just the segment on screen, so the
                     # label names none of them.
-                    st.checkbox(
+                    _auto_col, _undo_col = st.columns([1, 1])
+                    with _undo_col:
+                        _node_undo_buttons()
+                    _auto_col.checkbox(
                         "Auto-show new",
                         key="viz_auto_show_new",
                         on_change=viz_auto_show_new_toggled,
